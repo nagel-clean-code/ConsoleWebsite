@@ -1,62 +1,55 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const pty = require('node-pty');
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const pty = require("node-pty");
+const stripAnsi = require("strip-ansi");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-	httpCompression: true,
-	maxHttpBufferSize: 1e7
-});
+const io = new Server(server);
 
-// Serve static files (index.html, assets) from current directory
 app.use(express.static(__dirname));
 
-io.on('connection', socket => {
-	const shellCommand = process.platform === 'win32' ? 'powershell.exe' : (process.env.SHELL || 'bash');
-	const shell = pty.spawn(shellCommand, [], {
-		name: 'xterm-color',
-		cols: 120,
-		rows: 30,
-		cwd: process.env.HOME,
-		env: process.env
-	});
+io.on("connection", socket => {
+  const shellCommand = process.platform === "win32"
+    ? "powershell.exe"
+    : (process.env.SHELL || "bash");
 
-	socket.emit('output', `Подключено к локальной оболочке: ${shellCommand}\r\n`);
+  const shell = pty.spawn(shellCommand, [], {
+    name: "xterm-color",
+    cols: 120,
+    rows: 30,
+    cwd: process.env.HOME,
+    env: process.env,
+  });
 
-	socket.on('input', data => {
-		try {
-			const normalized = data === '\n' ? '\r' : data;
-			shell.write(normalized);
-		} catch (err) {
-			socket.emit('output', `Ошибка ввода: ${String(err)}\r\n`);
-		}
-	});
+  socket.emit("output_clean", `Подключено к локальной оболочке: ${shellCommand}\n`);
 
-	socket.on('resize', ({ cols, rows }) => {
-		if (typeof cols === 'number' && typeof rows === 'number') {
-			try { shell.resize(cols, rows); } catch {}
-		}
-	});
+  socket.on("input", data => {
+    if (data === "\r") data = "\n";
+    try {
+      shell.write(data);
+    } catch (err) {
+      socket.emit("output_clean", `Ошибка ввода: ${String(err)}\n`);
+    }
+  });
 
-	shell.on('data', data => {
-		socket.emit('output', data);
-	});
+  shell.on("data", data => {
+    socket.emit("output_raw", data);
+    socket.emit("output_clean", stripAnsi.default(data)); // Используем stripAnsi.default
+  });
 
-	shell.on('exit', code => {
-		socket.emit('output', `\r\nПроцесс завершён с кодом ${code}\r\n`);
-		if (socket.connected) socket.disconnect(true);
-	});
+  shell.on("exit", code => {
+    socket.emit("output_clean", `\nПроцесс завершён с кодом ${code}\n`);
+    if (socket.connected) socket.disconnect(true);
+  });
 
-	socket.on('disconnect', () => {
-		try { shell.kill(); } catch {}
-	});
+  socket.on("disconnect", () => {
+    try { shell.kill(); } catch {}
+  });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-	console.log(`Сервер запущен на порту ${PORT}`);
+  console.log(`Сервер запущен на порту ${PORT}`);
 });
-
-
