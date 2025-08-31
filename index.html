@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Веб-консоль с эмуляцией SSH</title>
+    <link href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" rel="stylesheet" />
+    <style>
+        body {
+            background-color: #000;
+            color: #fff;
+            margin: 0;
+            padding: 10px;
+        }
+        #terminal {
+            height: 400px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div id="terminal"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script>
+        const term = new Terminal({
+            convertEol: true,
+            fontFamily: 'Menlo, Monaco, Consolas, monospace',
+            fontSize: 14,
+        });
+        const terminalContainer = document.getElementById('terminal');
+        term.open(terminalContainer);
+        term.focus();
+
+        // Socket.IO подключение к локальному серверу
+        const socket = io();
+
+        // Вывод из серверной оболочки
+        socket.on('output', data => {
+            term.write(data);
+        });
+
+        // Локальное эхо, чтобы видеть ввод сразу (даже если шелл не эхоит)
+        const ENABLE_LOCAL_ECHO = true;
+
+        term.onData(data => {
+            // Локальное отображение ввода
+            if (ENABLE_LOCAL_ECHO) {
+                if (data === '\r') {
+                    term.write('\r\n');
+                } else if (data === '\u007F') { // Backspace
+                    term.write('\b \b');
+                } else if (data === '\u0003') { // Ctrl+C
+                    term.write('^C');
+                } else {
+                    term.write(data);
+                }
+            }
+
+            // Передаём в PTY на сервере; нормализуем Enter на CR
+            const payload = data === '\n' ? '\r' : data;
+            socket.emit('input', payload);
+        });
+
+        // Обеспечить фокус по клику
+        terminalContainer.addEventListener('click', () => term.focus());
+
+        // Отправляем размеры терминала на сервер (PTY resize)
+        function sendResize() {
+            const cols = term.cols;
+            const rows = term.rows;
+            socket.emit('resize', { cols, rows });
+        }
+        // Первый ресайз после открытия
+        sendResize();
+        // Ресайз по изменению окна
+        window.addEventListener('resize', () => {
+            // Небольшая задержка, чтобы xterm пересчитал layout
+            setTimeout(sendResize, 50);
+        });
+    </script>
+</body>
+</html>
